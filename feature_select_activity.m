@@ -1,0 +1,214 @@
+function [subj] = feature_select_activity(subj,data_patin,regsname, selsgroup,numfolds, fixed, fixednum, varargin)
+% created by AES (based on feature_select_anova) to select voxels based on 
+% overall activity (all stim =/ rest) rather than class discriminability
+% counterintuitively, this script will actually drop the regressor provided
+% as input and replace it with the selector (which should have been the
+% rest regressor with a 0 for all rest timepoints and a 1 for all example
+% timepoints) and its complement. the selector will then be a vector of all
+% ones of the same length
+%
+% NOTE: this calculates statmap for feature selection over the whole dataset 
+% (not respecting cross validation folds) and therefore should not be run 
+% with a regressor other than all > rest (or some other regressor that is 
+% orthogonal to the discrimination of interest)
+%
+% [SUBJ] = FEATURE_SELECT(SUBJ,DATA_PATIN,REGSNAME,SELSGROUP,...)
+%
+% Calls a statmap generation function multiple times, using
+% a different selector each time. This creates a group of
+% statmaps, which are then thresholded to create a group of
+% boolean masks, ready for use in no-peeking
+% cross-validation classification.
+%
+% Adds the following objects:
+% - pattern group of statmaps called NEW_MAP_PATNAME
+% - mask group based on the statmaps called
+%   sprintf('%s%i',NEW_MASKSTEM,THRESH)
+%
+% DATA_PATIN should be the name of the pattern object that
+% contains voxel (or other feature) values that you want to
+% create a mask of. If DATA_PATIN is a group_name, then this
+% will use a different member of the group for each
+% iteration.
+%
+% REGSNAME should be a binary nConds x nTimepoints 1-of-n matrix
+%
+% SELSGROUP should be the name of a selectors group, such as
+% created by create_xvalid_indices
+%
+% For each iteration: call the ANOVA on the DATA_PATIN data,
+% which will produce a statmap, employing only the TRs
+% labelled with a 1 in the selector for that iteration
+%
+% NEW_MAP_PATNAME (optional, default = DATA_PATIN +
+% STRIPPED_NAME). The name of the new statmap pattern group
+% to be created. By default, this will be 'anova' if
+% STATMAP_FUNCT = 'statmap_anova' etc.
+%
+% NEW_MASKSTEM (optional, default = DATA_PATIN +
+% 'anovathresh'). The name of the new thresholded boolean
+% mask group to be created from the ANOVA statmap. You'll
+% need to create multiple mask groups if you want to try out
+% multiple thresholds, so adding the threshold to the name
+% is a good idea
+%
+% THRESH (optional, default = 0.05). Voxels that don't meet
+% this criterion value don't get included in the boolean
+% mask that gets created from the ANOVA statmap. If THRESH =
+% [], the thresholding doesn't get run
+%
+% STATMAP_FUNCT (optional, default = 'statmap_anova'). Feed
+% in a function name and this will create a function handle
+% to that and use it to create the statmaps instead of
+% statmap_anova
+%
+% STATMAP_ARG (optional, default = []). If you're using an
+% alternative voxel selection method, you can feed it a
+% single argument through this
+%
+% Need to implement a THRESH_TYPE argument (for p vs F
+% values), which would also set the toggle differently xxx
+%
+% e.g. subj = feature_select( ...
+%         subj,'epi_z','conds','runs_nmo_xvalid','thresh',0.001)
+
+% License:
+%=====================================================================
+%
+% This is part of the Princeton MVPA toolbox, released under
+% the GPL. See http://www.csbmb.princeton.edu/mvpa for more
+% information.
+% 
+% The Princeton MVPA toolbox is available free and
+% unsupported to those who might find it useful. We do not
+% take any responsibility whatsoever for any problems that
+% you have related to the use of the MVPA toolbox.
+%
+% ======================================================================
+
+
+defaults.new_map_patname = sprintf('');
+defaults.new_maskstem = data_patin;
+defaults.thresh = 0.05;
+defaults.statmap_funct = 'statmap_anova';
+defaults.statmap_arg = struct([]);
+args = propval(varargin,defaults);
+
+
+if isempty(args.new_map_patname)
+  % get the name of the function being run, e.g. 'statmap_anova' -> 'anova'
+  stripped_name = strrep(args.statmap_funct,'statmap_','');
+  args.new_map_patname = sprintf('%s_%s',data_patin,stripped_name);
+end
+
+% append the thresh/rank# to the end of the name
+if ~fixed
+args.new_maskstem = [args.new_maskstem '_thresh' num2str(args.thresh)];
+else 
+args.new_maskstem = [args.new_maskstem '_top' num2str(fixednum)];
+end
+
+% extract the "rest" selector
+for select=1:length(subj.selectors)
+    if strcmp(subj.selectors{select}.name, 'rests')
+        restreg=subj.selectors{select}.mat;
+    end
+end
+restreg(2,:)=(restreg==0); %first row is stimulus regressor, second row is rest regressor
+
+%check if these selectors or regressors have been made already
+searchedsel = exist_object(subj,'selector','allselector');
+searchedreg = exist_object(subj,'regressors','restvsstim');
+
+%make this a regressor for rest vs. stimulus
+if ~searchedreg
+subj = init_object(subj,'regressors','restvsstim');
+subj = set_mat(subj,'regressors','restvsstim',restreg);
+end
+
+%make selector of same length
+if ~searchedsel
+allsel=(restreg(1,:)*0)+1;
+subj = init_object(subj,'selector','allselector');
+subj = set_mat(subj,'selector','allselector',allsel);
+end
+
+%update your regnames and selgroups
+selnames='allselector';
+regsname='restvsstim';
+
+
+[data_patnames isgroup] = find_group_single(subj,'pattern',data_patin,'repmat_times',1);
+
+if ~ischar(args.statmap_funct)
+  error('The statmap function name has to be a string');
+end
+
+  % Get the pattern for this iteration
+  cur_data_patname = data_patnames{1};
+  
+  % Get the selector name for this iteration
+  cur_selname = selnames;
+
+  % Name the new statmap pattern that will be created
+  cur_map_patname = args.new_map_patname;
+
+  % if a pattern with the same name already exists, it
+  % will trigger an error later in init_object, but we
+  % want to catch it here to save running the entire
+  % statmap first
+  if exist_object(subj,'pattern',cur_map_patname)
+    error('A pattern called %s already exists',cur_map_patname);
+  end
+  
+  if ~isempty(args.statmap_arg) && ~isstruct(args.statmap_arg)
+    warning('Statmap_arg is supposed to be a struct');
+  end
+  
+  % Add the current iteration number to the extra_arg, just in case
+  % it's useful
+  args.statmap_arg(1).cur_iteration = 1;
+
+  % Create a handle for the statmap function handle and then run it
+  % to generate the statmaps
+  statmap_fh = str2func(args.statmap_funct);
+  subj = statmap_fh(subj,cur_data_patname,regsname,cur_selname,cur_map_patname,args.statmap_arg);
+ % subj = set_objfield(subj,'pattern',cur_map_patname,'group_name',args.new_map_patname);
+
+  if fixed
+  statvect=get_mat(subj, 'pattern', cur_map_patname);
+  [sortedValues,sortIndex] = sort(statvect,'ascend'); %sort p values from smallest to largest
+  if fixednum<length(sortIndex)
+      lowerbound=statvect(sortIndex(fixednum)); %this is the largest p-value you'll take in the mask
+  else
+      lowerbound=statvect(sortIndex(end));
+  end
+  cur_maskname=[data_patin '_top' num2str(fixednum) '_1'];
+  args.new_maskstem=[data_patin '_top' num2str(fixednum)];
+  subj = create_thresh_mask(subj,cur_map_patname,cur_maskname,lowerbound);
+%   subj = init_object(subj,'mask',cur_maskname);
+%   subj = set_mat(subj,'mask',cur_maskname,statvect)
+  subj = set_objfield(subj,'mask',cur_maskname,'group_name',[args.new_maskstem '_base']); %this group name will be what you set xvalmask to for crossvalidation
+  end
+ 
+  %for each fold, make copy of the mask labeled by the fold number
+  for f=1:numfolds
+  if ~isempty(args.thresh)
+    %  new thresholded binary mask from the p-values statmap pattern returned by the anova
+    subj = create_thresh_mask(subj,cur_map_patname,[cur_maskname '_' num2str(f)],lowerbound); %this is silly since it's the same one for every fold, but whatever
+    subj = set_objfield(subj,'mask',[cur_maskname '_' num2str(f)],'group_name',[args.new_maskstem]);
+  end
+  end
+  
+
+disp(' ');
+disp( sprintf('Pattern statmap group ''%s'' and mask group ''%s'' created by feature_select', ...
+	      args.new_map_patname,args.new_maskstem) );
+
+
+    
+
+
+
+
+

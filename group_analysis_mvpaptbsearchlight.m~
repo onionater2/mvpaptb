@@ -1,0 +1,48 @@
+function group_analysis_mvpaptbsearchlight(subjectlist, classfolder)
+%this averages across subjects and makes group stat map
+studydir='/mindhive/saxelab2/EIB/';
+for s=1:length(subjectlist)
+       subjectID=subjectlist{s}
+       subjdir=[studydir subjectID '/'];
+       cd(subjdir)
+       disc=load([subjdir  'mvpa_ptb/discriminations']);
+       discnames=fieldnames(disc)
+       numDisc=length(discnames);
+            mvpadir=[subjdir 'mvpa_ptb/' classfolder '/']
+            cd(mvpadir)
+            selector{1}='runs'
+            selector{2}=''
+            for d=1:numDisc
+                disp(d)
+            discname=discnames{d};
+            for c=1:2
+                if c==1 selectorname='runs'; else selectorname='other'; end
+            filestring=[discname '*' selector{c} '*.img']
+            imgnames=dir(filestring);
+            numfolds=size(imgnames,1)
+            if numfolds>0
+            imgstring=imgnames(1).name(1:end-5);
+            p=spm_select('list', mvpadir, ['^' imgstring '.*\.img$']); %% no sure why you need this special filter instead of swrf*.img, but you do
+                files = spm_vol(p);
+                for i=1:numfolds
+                data=spm_read_vols(files(i));
+                if i==1
+                    voxelsum=zeros(size(data));
+                end
+                voxelsum=voxelsum+data;
+                end
+                voxelwiseAvg=voxelsum/numfolds;
+            
+            writeTemplate=files(1);
+            avg_output.fname    = [subjectID '_' discname '_' selectorname '_crossfoldavg.img'];
+            avg_output=spm_create_vol(writeTemplate);
+            for i=1:avg_output.dim(3);
+                avg_output=spm_write_plane(avg_output,voxelwiseAvg(:,:,i),i);
+                fprintf ('.')
+            end
+            end
+            end
+            end
+
+end
+end

@@ -1,0 +1,29 @@
+function SL_AvgAcrossPartitions(subjectlist, classfolder, task, runsincluded
+studydir='/mindhive/saxelab2/EIB/'
+groupdir=([studydir '/RandomEffects/group_' classfolder, subjectrange '/'])
+cd(groupdir)
+group_mvpaptbSL(subjectlist)
+numSubj=length(subjectlist);
+contypes={'DiffChance', 'MEANACC'}
+for s=1:numSubj
+    subjectID=subjectlist{numSubj};
+for c=1:length(contypes)
+    contype=contypes{c}
+    subjfiles=dir(['IND_' subjectID '*crossruns*selector*crossfold' contype '.img')
+    for f=1:length(subjfiles)
+       p=subjfiles{f}
+       file = spm_vol(p); 
+       data(:,:,:,f)=spm_read_vols(file);
+       data(data==0)=NaN;     
+    end
+    voxelwiseAvg(:,:,:)=mean(data,4).*mask;
+
+            writeTemplate=file; % getting template from a single partition classification .img, keeping pinfo
+            classificationpinfo=writeTemplate.pinfo
+            writeTemplate.dt = [spm_type('float64') spm_platform('bigend')];
+            writeTemplate.fname = [subjectID '_' discname '_'  '_crossfoldMEANACC.img'];
+            avg_singleoutput.fname = [subjectID '_' discname '_' selector '_train' partition '_crossfoldMEANACC.img'];
+            avg_singleoutput=spm_create_vol(writeTemplate);
+            avg_singleoutput = spm_write_vol(avg_singleoutput, voxelwiseAvg(:,:,:,subjcount));  
+end
+

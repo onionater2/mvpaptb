@@ -1,0 +1,10 @@
+cd(directory)
+     
+    %turns out you'll use a lot of space even if you just save the full
+    %subjstructure for every mask. copy and delete out masks from structure
+    %that is saved to dir and just save it once
+    subjectsave2dir=subjectsave;
+    subjectsave2dir.masks=[]; % to replace a given mask m into a structure later on just set subjectsave2dir.masks=savemasks{m}
+    
+    %% save the important stuff
+    save([mvpadir mask_description '_' printregressor '_' xvalselector '_classification.mat'], 'results');

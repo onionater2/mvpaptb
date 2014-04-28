@@ -1,0 +1,50 @@
+function joinSLsubsets(study, resultsdir, subjectlist)
+rootdir=['/mindhive/saxelab2/' study '/']
+for s=1:length(subjectlist)
+    subject=subjectlist{s}
+    subjSLdir=[rootdir, subject '/mvpa_ptb/' resultsdir];
+    cd(subjSLdir)
+    imgfiles=dir('*.img');
+    for f=1:length(imgfiles)
+        filename=imgfiles(f);
+        filename=filename.name;
+        imgfilescell{f}=filename(1:end-7);
+    end
+    imgtypes=unique(imgfilescell);
+
+    for i=1:length(imgtypes)
+        imagetype=imgtypes{i}
+        subsetcheck=imagetype(end-5:end);
+        if strcmp('subset', subsetcheck)
+        theseimages=dir([imagetype '*.img']);
+        data=[];
+        uniondata=[];
+        for img=1:length(theseimages)
+        subsetimg=theseimages(img).name
+        file=spm_vol(subsetimg);
+        data(:,:,:,img)=spm_read_vols(file);
+        
+        %delete this img
+        end
+        uniondata=sum(data,4);
+        writeTemplate=file(1); % getting template from a single fold classification .img, keeping pinfo
+        classificationpinfo=writeTemplate.pinfo
+        writeTemplate.dt = [spm_type('float64') spm_platform('bigend')];
+        writeTemplate.fname = [imagetype(1:end-6) 'union.img'];
+        unionoutput.fname =[imagetype(1:end-6) 'union.img'];
+        unionoutput=spm_create_vol(writeTemplate);
+        unionoutput = spm_write_vol(unionoutput, uniondata);        
+        
+        deleteimgs = questdlg([imagetype ' union image created.  ','Delete subset images?']);
+        if strcmpi(deleteimgs,'Yes');
+        for img=1:length(theseimages)
+        subsetimg=theseimages(img).name
+        delete(subsetimg)
+        end
+        end
+
+    end
+    end
+end
+end
+    

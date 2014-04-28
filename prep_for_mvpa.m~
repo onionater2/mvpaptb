@@ -1,0 +1,172 @@
+function prep_for_mvpa(study, task, subjectlist, resultfolder)
+%created by AES 4/18/13, gets data from standard saxelab SPM organization
+%ready for mvpa analysis using princeton toolbox
+
+rootdir=['/mindhive/saxelab2/'];
+studydir=[rootdir study '/'];
+prefix='swrf'; % type of preprocessed image to look for
+hemodynamic_delay=6;
+TR=2;
+responsefunction='hrf'; 
+
+if ~iscell(subjectlist)
+    subjectlist={subjectlist};
+end
+
+numSubj=length(subjectlist)
+runs=listbolds(task, subjectlist);
+fextension='.img';
+
+for s=1:numSubj
+
+subject=subjectlist{s}
+
+    %figure out what bold dirs this subject has
+    boldlist=runs{s}; % get list of bolds for this task for this subject
+    if ~isempty(boldlist) % assuming they have some bold dir for this task
+    numruns=length(boldlist)
+    
+subjdir=[studydir subject '/'];
+cd(subjdir)
+mvpadir='mvpa_ptb/';
+mkdir(mvpadir)
+    
+% get their mask (default= anatomical)
+%maskdir='3danat/'
+% mvpa_mask=dir([maskdir'ws*' fextension]);
+% mvpa_mask_description='whole_brain_graymatter';
+maskdir='roi/';
+mvpa_mask=dir([maskdir 'ROI_RTPJ_tomloc*' fextension]);
+mvpa_mask_description='RTPJ_tomloc_ind';
+current=pwd
+mvpa_mask_name=[maskdir mvpa_mask.name];
+
+% get the results folders
+
+load(['results/' resultfolder '/SPM.mat'])
+numTimepoints=size(SPM.xY.VY); numTimepoints=numTimepoints(1)
+IPS=numTimepoints/numruns;
+
+%just look at run 1, cond 1 to get relevant info about number of conditions and presentations
+r=1;  
+    taskStruct=SPM.Sess(r).U;
+        numConds=size(taskStruct); numConds=numConds(2);
+%initialize regressors and selectors matrices
+    %convolvedregressors=zeros(numTimepoints, numConds);
+    binarizedregressors=zeros(numTimepoints, numConds);
+    blocklabelmatrix=zeros(numTimepoints, 1);
+    selectors=zeros(numTimepoints, 1); 
+    art_selectors=ones(numTimepoints, 1);
+    
+    for c=1:numConds
+        condStruct=SPM.Sess(r).U(c);
+        conditionNames{c}=SPM.Sess(r).U(c).name{:};
+        numPresentations{c}=length(SPM.Sess(r).U(c).ons); %% might not need this for anything
+        trialDurations{c}=ceil(SPM.Sess(r).U(c).dur(1)); %% assumes each event for a condition is same length, and rounds up to nearest TR
+    end
+
+for r=1:numruns
+    run=boldlist(r);
+    if mod(r,2)==0
+        evenodd=2; %even
+    else
+        evenodd=1 %odd
+    end
+    startRow=(r-1)*numTimepoints/numruns+1;
+    endRow=(r-1)*numTimepoints/numruns+numTimepoints/numruns;
+    binarizedrunmatrix=zeros(IPS,numConds);
+    blockrunmatrix=zeros(IPS,1);
+    selectors(startRow:endRow,:)=selectors(startRow:endRow,:)+r;
+    eoselectors(startRow:endRow,:)=evenodd;
+
+for c=1:numConds
+    condduration=trialDurations{c};
+    condonsets=SPM.Sess(r).U(c).ons;
+    binarizedrunmatrix(condonsets,c)=1;
+    blockrunmatrix(condonsets,1)=c;
+    binarizedrunmatrix(condonsets:condonsets+(condduration-1),c)=1;
+end
+
+binarizedregressors(startRow:endRow,:)=binarizedrunmatrix;
+blocklabelmatrix(startRow:endRow,1)=blockrunmatrix;
+
+    % load art regressors and use to create art_selector vector (=0 for any
+    % artifact timepoint)
+    matfile=adir(['bold/0' num2str(run) '/art_regression_outliers_sw*.mat']);
+    load(matfile{1})
+    runarts=R(:,1:end-6);
+    runarts=sum(runarts,2);
+    art_selectors(startRow:endRow,1)=art_selectors(startRow:endRow,1)-runarts;
+end
+
+count=0;
+blocklabel=blocklabelmatrix;
+for x=1:length(blocklabelmatrix)
+       if blocklabelmatrix(x)~=0
+       count=count+1;
+       blocklabel(x)=count;
+       end
+end
+
+for x=1:length(blocklabelmatrix)
+    value=blocklabelmatrix(x);
+    if blocklabelmatrix(x)~=0
+    duration=trialDurations{value};
+    count=blocklabel(x);
+    blocklabel(x:x+(duration-1))=count;
+    end
+end
+
+%make selector to exclude all rest points (=0 for any rest timepoint)
+restregressor=blocklabel;
+restregressor(restregressor>0)=1;
+
+%make single selector so exclude all rest AND artifact points
+combinedselector=zeros(numTimepoints, 1);
+combinedselector(restregressor==1 & art_selectors==1)=1;
+
+%make block selector that also excludes artifact points (already excludes
+%rest points)
+
+combblockselector=blocklabel;
+combblockselector(art_selectors==0)=0;
+for x=1:length(combblockselector)
+   value=combblockselector(x);
+end
+
+%% convolve this with hrf (look up best way to do this)
+hrfinfo.dt=TR;
+hrfinfo.name=responsefunction;
+bf = spm_get_bf(hrfinfo);
+
+for c=1:numConds
+U.u=binarizedregressors(:,c);
+U.name={'reg'}; % just because it needs a name
+convolvedregressors(:,c) = spm_Volterra(U, bf.bf);
+end
+
+
+%%
+
+%%list of all the bold images to use
+boldimages=mat2cell(SPM.xY.P, ones(numTimepoints,1));
+
+%some silliness to ensure intuitive naming
+boldnames=boldimages;
+maskname=mvpa_mask_name;
+condregressors_convolved=convolvedregressors'; %% note these are transposed to be appropriate orientation for the toolbox
+condregressors_binarized=binarizedregressors'; %% ditto
+blocklabels=blocklabel;
+condnames=conditionNames;
+runselectors=selectors;
+artselectors=art_selectors;
+restselectors=restregressor;
+combselectors=combinedselector;
+blocklabelscomb=combblockselector;
+evenoddselectors=eoselectors;
+
+ save([mvpadir 'subjinfo'], 'boldnames', 'maskname', 'mvpa_mask_description', 'condregressors_binarized', 'condregressors_convolved',  'condnames','blocklabels', 'blocklabelscomb', 'runselectors', 'evenoddselectors', 'artselectors', 'restselectors', 'combselectors', 'hemodynamic_delay', 'TR');
+
+end
+    end
+end
